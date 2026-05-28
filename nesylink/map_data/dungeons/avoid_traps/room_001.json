@@ -1,0 +1,42 @@
+{
+  "id": "room_001",
+  "coord": [0, 0],
+  "layout": [
+    "..........",
+    ".##.##.##.",
+    "..........",
+    ".##.##.##.",
+    "..........",
+    "..........",
+    "..........",
+    ".........."
+  ],
+  "spawns": {
+    "default": [4, 6],
+    "from_south": [4, 6]
+  },
+  "default_spawn": "default",
+  "objects": [
+    {"id": "trap_1", "kind": "trap", "pos": [4, 2], "damage": 1, "respawn_to": "default"},
+    {"id": "trap_2", "kind": "trap", "pos": [8, 4], "damage": 1, "respawn_to": "default"},
+    {"id": "trap_3", "kind": "trap", "pos": [0, 2], "damage": 1, "respawn_to": "default"}
+  ],
+  "exits": [
+    {
+      "id": "north_exit",
+      "direction": "north",
+      "target_room": "room_001",
+      "target_entry": "from_south",
+      "type": "normal",
+      "success_message": "CLEARED!"
+    },
+    {
+      "id": "south_exit",
+      "direction": "south",
+      "target_room": "room_001",
+      "target_entry": "from_south",
+      "type": "normal",
+      "success_message": "RETRY"
+    }
+  ]
+}
