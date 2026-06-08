@@ -4,7 +4,7 @@
 
 *A Gymnasium-compatible Zelda-like dungeon environment for reinforcement learning.*
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/) [![Gymnasium](https://img.shields.io/badge/Gymnasium-compatible-2ea44f.svg)](https://gymnasium.farama.org/) [![Package](https://img.shields.io/badge/install-pip%20install%20-e%20.-orange.svg)](#installation) [![Docs](https://img.shields.io/badge/docs-local-lightgrey.svg)](docs/README.md)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/) [![Gymnasium](https://img.shields.io/badge/Gymnasium-compatible-2ea44f.svg)](https://gymnasium.farama.org/) [![Package](https://img.shields.io/badge/install-pip%20install%20-e%20.-orange.svg)](#installation) [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-lightgrey.svg)](https://crazyjassbread.github.io/nesylink/)
 
 [Installation](#installation) · [Quick Start](#quick-start) · [Built-in Tasks](#built-in-tasks) · [Architecture](#architecture) ·  [Rewards](#rewards) · [Training](#training) · [Documentation](#documentation) · [简体中文](README.zh.md)
 

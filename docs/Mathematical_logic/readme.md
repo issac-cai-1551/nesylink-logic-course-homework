@@ -1,15 +1,13 @@
 # 2026 春 数理逻辑大作业
 
-本目录说明如何把 `nesylink` 中的五个内置任务作为数理逻辑课程大作业使用。作业目标不是训练强化学习模型，而是要求同学把游戏环境抽象成形式系统，给出可检查的状态、动作、转移关系和目标公式，并实现一个能够完成任务的求解器。
+本文档是对 2026 春学期数理逻辑大作业的说明。我们设计了五个有趣的 Zelda-like 地牢探索任务，下面的内容是对这些任务和作业要求的详细介绍 👇
 
-推荐技术路线：
+> 💡 如果选择 RL agent 作为子任务的求解方法，建议直接在 Raw pixels 基础上进行训练，而不是使用离散处理后的 Obs_dict 作为输入。如何对 Raw pixels 进行符号抽取、规划和执行，也是本次作业的重点之一
+> 祝大家玩的开心 😉
 
-1. 用 Python 读取 `nesylink` 的 `obs` 和 `info`，先完成可执行求解器。
-2. 在 Lean4 中形式化描述任务的抽象模型，例如状态空间、动作语义、可达关系和目标性质。
-3. 让搜索算法输出动作序列，并用真实 `nesylink` 环境 replay 验证。
+## nesylink 环境介绍
 
-## 环境准备
-
+### 安装与运行
 从项目根目录安装本仓库：
 
 ```bash
@@ -21,22 +19,21 @@ Human play: 需要安装 pygame 依赖：
 ```bash
 pip install -e ".[pygame]"
 ```
+
 之后可以直接在终端运行
 ```shell
-python -m nesylink.game --rooms nesylink/map_data/mathematical_logic/task_1/room_001.json
-python -m nesylink.game --rooms nesylink/map_data/mathematical_logic/task_2/room_001.json
-python -m nesylink.game --rooms nesylink/map_data/mathematical_logic/task_3/dungeon.json
-python -m nesylink.game --rooms nesylink/map_data/mathematical_logic/task_4/dungeon.json
-python -m nesylink.game --rooms nesylink/map_data/mathematical_logic/task_5/dungeon.json
+python utils/human_play.py --task mathematical_logic/task_1 # 1~5 任选其一
 ```
+Tips：可以在游玩过程中使用 `ESC` 键退出，使用 `Tab` 了解 nesylink 提供的 info 与 obs 结构。
 
+### 任务列表
 | task_id | 地图 | 奖励 | 最大步数 | 任务说明 |
 |---|---|---|---:|---|
 | `mathematical_logic/task_1` | `nesylink/map_data/mathematical_logic/task_1/room_001.json` | `mathematical_logic/task_1` | 500 | 收集钥匙并从北侧锁门离开 |
 | `mathematical_logic/task_2` | `nesylink/map_data/mathematical_logic/task_2/room_001.json` | `mathematical_logic/task_2` | 500 | 击败怪物、拿钥匙、从西侧条件门离开 |
 | `mathematical_logic/task_3` | `nesylink/map_data/mathematical_logic/task_3/dungeon.json` | `mathematical_logic/task_3` | 1000 | 穿过怪物房，去西侧房间拿钥匙，返回起点并打开东侧锁门 |
-| `mathematical_logic/task_4` | `nesylink/map_data/mathematical_logic/task_4/dungeon.json` | `mathematical_logic/task_4` | 1000 | 旋转桥、拿钥匙和剑、击败守卫并打开最终宝箱 |
-| `mathematical_logic/task_5` | `nesylink/map_data/mathematical_logic/task_5/dungeon.json` | `mathematical_logic/task_5` | 1000 | 探索多房间地牢并完成宝箱目标 |
+| `mathematical_logic/task_4` | `nesylink/map_data/mathematical_logic/task_4/dungeon.json` | `mathematical_logic/task_4` | 1000 | 旋转桥、拿钥匙和剑、击败怪物并打开最终宝箱 |
+| `mathematical_logic/task_5` | `nesylink/map_data/mathematical_logic/task_5/dungeon.json` | `mathematical_logic/task_5` | 1000 | 探索多房间地牢并打开所有宝箱 |
 
 ## 作业要求:
 TODO: 
@@ -65,7 +62,7 @@ python docs/Mathematical_logic/examples/task2_reference.py
 
 > 注意：当前 `mathematical_logic/task_2` 使用同名主题奖励；击败怪物只是中间目标，episode 只在真实地图完成或死亡时终止。
 
-## 游戏接口介绍
+### 动作空间、观测空间和信息结构
 
 动作空间是离散动作，编号如下：
 
@@ -76,13 +73,13 @@ python docs/Mathematical_logic/examples/task2_reference.py
 | 2 | `DOWN` | 向下移动 1 像素 |
 | 3 | `LEFT` | 向左移动 1 像素 |
 | 4 | `RIGHT` | 向右移动 1 像素 |
-| 5 | `BUTTON_A` | 交互；若没有可交互对象，则使用剑攻击 |
-| 6 | `BUTTON_B` | 使用盾 |
+| 5 | `BUTTON_A` | 交互；使用物品A（默认是剑） |
+| 6 | `BUTTON_B` | 使用物品B（默认是盾） |
 
 地图大小为 `10 x 8` 个 tile，每个 tile 是 `16 x 16` 像素。因此从一个 tile 的左上角移动到相邻 tile 的左上角，通常需要连续执行 16 次同方向动作。
 
 `obs` 中最常用的字段：
-> 很不幸，本次作业设置希望你们可以直接在 raw pixels 的基础上进行学习，所以一下 obs 字段仅作参考
+> 很不幸，本次作业希望你们可以直接在 raw pixels 的基础上进行学习，所以一下 obs 字段仅作参考
 
 | 字段 | 含义 |
 |---|---|
@@ -94,20 +91,6 @@ python docs/Mathematical_logic/examples/task2_reference.py
 | `obs["monsters_tile"]` | 怪物 tile 坐标 |
 | `obs["monsters_hp"]` | 怪物生命值 |
 | `obs["monsters_active_mask"]` | 怪物槽位是否有效 |
-
-`obs["grid"]` 的 tile 编码：
-
-| 编码 | 含义 |
-|---:|---|
-| 0 | 空地 |
-| 1 | 墙 |
-| 2 | 玩家 |
-| 3 | 怪物 |
-| 4 | 宝箱 |
-| 5 | 出口 |
-| 6 | 陷阱 |
-| 7 | 按钮 |
-| 8 | NPC |
 
 `info` 中最常用的字段：
 

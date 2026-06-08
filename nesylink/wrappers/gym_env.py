@@ -250,6 +250,9 @@ class BaseGameEnv(gym.Env):
         if max_monsters is not None:
             self.engine.max_monster_slots = int(max_monsters)
 
+        if self.reward_fn is not None and hasattr(self.reward_fn, "set_engine_ref"):
+            self.reward_fn.set_engine_ref(self.engine)
+
         self.action_space = spaces.Discrete(len(ACTION_LABELS))
         if self.observation_mode == "grid":
             self.observation_space = build_grid_observation_space(
