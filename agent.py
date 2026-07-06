@@ -615,6 +615,8 @@ class Policy:
                     "steps_left=", self.force_exit_steps,
                 )
 
+            self.belief.last_action = self.force_exit_action
+
             return int(self.force_exit_action)
         
         need_vision = (
@@ -663,28 +665,25 @@ class Policy:
         else:
             raw_action = self.action_queue.popleft()
 
-        # 如果当前已经在出口边缘，并且队列动作正是朝外走，
-        # 进入强制出门模式，绕过 shield。
-        exit_action = self.exit_action_if_at_exit(sym)
 
         if (
             self.current_subgoal is not None
             and self.current_subgoal.kind == "go_exit"
-            and exit_action is not None
-            and raw_action == exit_action
+            and self.is_border_leaving_action(sym.player, raw_action)
         ):
-            self.force_exit_action = exit_action
+            self.force_exit_action = raw_action
             self.force_exit_steps = 40
 
             print(
                 "[START_FORCE_EXIT]",
                 "step=", self.belief.step,
                 "player=", sym.player,
+                "raw=", raw_action,
                 "exits=", sym.exits,
-                "action=", exit_action,
             )
 
-            return int(exit_action)
+            self.belief.last_action = raw_action
+            return int(raw_action)
 
 
         # 5. 安全过滤
@@ -776,6 +775,18 @@ class Policy:
 
         return None
 
+    def is_border_leaving_action(self, player: Optional[Pos], action: int) -> bool:
+        if player is None:
+            return False
 
+        x, y = player
+
+        return (
+            (y == 0 and action == ACTION_UP) or
+            (y == ROOM_H - 1 and action == ACTION_DOWN) or
+            (x == 0 and action == ACTION_LEFT) or
+            (x == ROOM_W - 1 and action == ACTION_RIGHT)
+        )
+    
 def make_policy() -> Policy:
     return Policy()
