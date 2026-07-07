@@ -120,18 +120,7 @@ class BeliefState:
             if new_tools:
                 print(f"[LOOT] step={self.step} got TOOL: {new_tools}")
 
-        # 更新 facing：根据玩家 tile 变化推断
-        if self.last_player is not None and sym.player is not None:
-            lx, ly = self.last_player
-            x, y = sym.player
-            if x > lx:
-                self.facing = "right"
-            elif x < lx:
-                self.facing = "left"
-            elif y > ly:
-                self.facing = "down"
-            elif y < ly:
-                self.facing = "up"
+            self.facing = sym.facing
 
             # 卡住检测
             if sym.player == self.last_player and self.last_action in {
@@ -142,7 +131,6 @@ class BeliefState:
                 self.stuck_count = 0
 
         self.last_player = sym.player
-        sym.facing = self.facing
 
         if isinstance(info, dict):
             events = info.get("events", {})
@@ -175,6 +163,9 @@ class Subgoal:
     kind: str
     target: Optional[Pos] = None
     facing : Optional[int] = None
+    dest_room_id : Optional[int] = None
+    start_room_id : Optional[int] = None
+    exit_dir : Optional[str] = None
 
 #lcd : 任务中可能发生的事件，复制到这里方便写代码
 TASK_MILESTONES: dict[str, tuple[str, ...]] = {
@@ -207,7 +198,19 @@ TASK5_EVENTS = (
     "world_completed",
 )
 
-# def opposition(facing)
+def opposition(facing: str) -> str | None:
+    """返回相反方向"""
+    if facing == "up":
+        return 'down'
+    if facing == "down":
+        return 'up'
+    if facing == "left":
+        return 'right'
+    if facing == "right":
+        return 'left'
+    else:
+        #不合法返回None
+        return None
 
 def neighbors(p: Pos) -> List[Tuple[Pos, int]]:
     x, y = p
@@ -340,6 +343,15 @@ def Str2Enum_facing(facing : str) -> int:
     }
     return relation.get(facing, ACTION_NOOP)
 
+def Enum2Str_facint(facing : int) -> str:
+    relation = {
+        ACTION_UP : "up",
+        ACTION_DOWN:"down",
+        ACTION_LEFT:"left",
+        ACTION_RIGHT:"right"
+    }
+    return relation.get(facing, 'wait')
+
 #lcd
 def is_encounter_monster(sym : SymbolicObs,bound = 10) -> int | None :
     """
@@ -378,8 +390,10 @@ def is_encounter_monster(sym : SymbolicObs,bound = 10) -> int | None :
 
 class SymbolicPlanner:
     def __init__(self):
+        self.current_subgoal: Optional[Subgoal] = None
         #房间 metadata
-        self.rooms = {"explored":[],"unexplored":[]} #管理已发现或潜在的房间数
+        self.rooms = {"explored":[],"unexplored":[0],"stillNeed":[]} #管理已发现或潜在的房间数,初始时0房间还没探索,+管理需要二次进入的房间
+        self.stillNeedIdx = 0 #指向该访问的stillNeed索引
         self.room_num = 1 #房间总数,默认出生房room_id=0
         self.current_room_coord = (0,0) #当前所在房间的坐标
         self.current_room_id = 0
@@ -387,28 +401,90 @@ class SymbolicPlanner:
         self.room_Coord2ID = {(0,0) : 0} #当前房间坐标到房间id的映射
 
         #管理房间exit
-        self.room_exits_info = {} #以房间room_id为索引
+        self.room_exits_info : Dict[int, Dict[str, dict | None]]= {0:{'up':None,'down':None,'left':None,'right':None}} #以房间room_id为索引
 
+        self.has_key = False
 
-
+    def neighbors(self,room_cood: Pos) -> List[Tuple[Pos, str]]:
+        x, y = room_cood
+        return [
+            ((x, y - 1), 'left'),
+            ((x, y + 1), 'right'),
+            ((x - 1, y), 'up'),
+            ((x + 1, y), 'down'),
+        ]
 
     def explore_room(self,room_id, sym : SymbolicObs):
         """
+        #lcd
         对id为room_id的新房间进行初步探索，更新房间 metadata
         """
         self.rooms['explored'].append(room_id)
         self.rooms['unexplored'].remove(room_id)
-        self.current_room = room_id
+        #还需要判断房间是否特殊，需要多次访问
+        stillNeed = (sym.switches is not None) and (len(sym.switches) > 0)
+        last_room_id = self.current_room_id
+        self.current_room_id = room_id
         self.current_room_coord = self.room_ID2Coord[room_id]
 
         #根据存在的exit，更新self.rooms['unexplored']，将exit里面当作潜在房间
         #一般四个方向每个方向最多有一个exit
-        dirs = [('up',0),('down',ROOM_H-1),('left',0),('right',ROOM_W)]
+        dirs = [('up',0),('down',ROOM_H-1),('left',0),('right',ROOM_W-1)]
         exits_info = sym.exits_info
+        print('debuging<<<<<<<<<<<<<<<<<<<<')
+        print(exits_info)
         for dir in dirs:
-            #TODO
-            pass
+            if exits_info.get(dir[0],None) is None:
+                #确定这个方向的exit存在
+                print('continue')
+                continue
+            if room_id==1:
+                print('sdfsfafsdfa')
+                print(f'opposite:{opposition(dir[0])} facing:{sym.facing}')
+            if (opposition(dir[0]) == sym.facing and
+                    (self.current_subgoal is not None) and self.current_subgoal.kind == 'go_exit'):
+                #来时exit
+                print('come on')
+                self.room_exits_info[self.current_room_id][dir[0]] = {
+                    'tiles':exits_info[dir[0]]['tiles'],
+                    'exit_type':exits_info[dir[0]]['exit_type'],
+                    'opened':exits_info[dir[0]]['opened'] or exits_info[dir[0]]['exit_type']!='locked_key',#是否可打开，包括conditional类型exit的判定
+                    'dest':last_room_id,#通往的房间id
+                    'is_reached':True,#是否已经到达过dest房间
+                }
+            else:
+                #其他方向的exit
+                #每个exit都通往潜在的房间
+                new_room_id = self.room_num
+                self.room_num += 1
+                self.rooms['unexplored'].append(new_room_id)
+                #计算新房间坐标
+                new_x = self.current_room_coord[0]
+                new_y = self.current_room_coord[1]
+                if dir[0]=='up':
+                    new_x -= 1
+                if dir[0]=='down':
+                    new_x += 1
+                if dir[0]=='left':
+                    new_y -= 1
+                if dir[0]=='right':
+                    new_y += 1
+                self.room_ID2Coord[new_room_id] = (new_x,new_y)
+                self.room_Coord2ID[(new_x,new_y)] = new_room_id
+                #init 新房间的 exit_info
+                self.room_exits_info[new_room_id] = {'up':None,'down':None,'left':None,'right':None}
+                #update 当前房间exit信息
+                self.room_exits_info[self.current_room_id][dir[0]] = {
+                        'tiles': exits_info[dir[0]]['tiles'],
+                        'exit_type': exits_info[dir[0]]['exit_type'],
+                        'opened': exits_info[dir[0]]['opened'] or exits_info[dir[0]]['exit_type']!='locked_key',
+                        'dest': new_room_id,  # 通往的房间id
+                        'is_reached':False,
+                    }
 
+        #如果判断房间还需要
+        if stillNeed:
+            self.rooms['stillNeed'].append(room_id)
 
     def activate_switch(self):
         """激活switch发生的房间转换逻辑"""
@@ -432,34 +508,116 @@ class SymbolicPlanner:
         5.explored_all_room_and_detect_switch -> activate_switch
         """
 
+        self.has_key = belief.has_key
         # 玩家位置识别失败时，不要乱动
         if sym.player is None:
-            return Subgoal("wait")
+            self.current_subgoal = Subgoal('wait')
+            return self.current_subgoal
 
         #lcd
         # 1.附近有monster
         monster_facing = is_encounter_monster(sym)
         if monster_facing:
+            self.current_subgoal = Subgoal('kill_monster',facing=monster_facing)
             return Subgoal("kill_monster",facing=monster_facing)
 
         #lcd
         #2.发现未打开chest
         chest = self.nearest(sym.player,sym.chests)
         if chest is not None:
+            self.current_subgoal = Subgoal('find_chest',chest)
             return Subgoal("find_chest",chest)
 
-        # 3.有钥匙：去出口
-        if belief.has_key:
-            exit_pos = self.nearest(sym.player, sym.exits)
-            if exit_pos is not None:
-                return Subgoal("go_exit", exit_pos)
+        #lcd
+        #3. 当前未将所有房间探索完毕且发现exit -> leave
+        if self.rooms['unexplored']:
+            for room_togo in reversed(self.rooms['unexplored']):#逆序找一个可以探索的且未探索的房间，dfs
+                # 根据当前房间坐标和目标房间坐标找一条路径
+
+                dir = self._bfs(self.current_room_id, room_togo)
+                print(f'roomtogo{room_togo}, {dir}')
+                if dir is not None and (dir != 'wait'):
+                    exit = self.room_exits_info[self.current_room_id][dir]
+                    if exit:
+                        exit_pos = self.nearest(sym.player, exit['tiles'])
+                        print(f'exit_pos:{exit_pos}')
+                        if exit_pos is not None:
+                            self.current_subgoal = Subgoal("go_exit", exit_pos,
+                                                           start_room_id=self.current_room_id, dest_room_id=exit['dest'],
+                                                           exit_dir=dir)
+                            return self.current_subgoal
 
         #lcd
-        #4. 当前未将所有房间探索完毕且发现normal exit -> leave
-        if self.rooms['unexplored']:
-            exit_pos = self.nearest(sym.player, sym.exits)
+        #4. 当前所有房间探索完毕且需要重复访问的房间stillNeed不为空 -> 回去的exit and leave
+        if self.rooms['stillNeed']:
+            #根据当前房间坐标和目标房间坐标找一条路径
+            dir = self._bfs(self.current_room_id,self.rooms['stillNeed'][self.stillNeedIdx])
+            if dir is not None:
+                exit = self.room_exits_info[self.current_room_id][dir]
+                if exit:
+                    exit_pos = self.nearest(sym.player, exit['tiles'])
+                    print(f'exit_pos:{exit_pos}')
+                    if exit_pos is not None:
+                        self.current_subgoal = Subgoal("go_exit", exit_pos,
+                                                       start_room_id=self.current_room_id, dest_room_id=exit['dest'],
+                                                       exit_dir=exit['dir'])
+                        return self.current_subgoal
+
+
 
         return Subgoal("explore")
+
+    def _bfs(self,start_room : int,dest_room : int) -> str | None:
+        """找到start_room与dest_room之间的路径，返回路径下一步应该的方向"""
+        if start_room == dest_room:
+            print(f'start_room == dest_room {start_room}-{dest_room}')
+            return None
+
+        start = self.room_ID2Coord[start_room]
+
+        dest = self.room_ID2Coord[dest_room]
+        if dest_room==2:
+            print(f'start:{start} dest:{dest}')
+        q = deque([start])
+        parent: Dict[Pos, Tuple[Optional[Pos], Optional[str]]] = {
+                start: (None, None)
+            }
+
+        while q:
+            cur = q.popleft()
+            curId = self.room_Coord2ID.get(cur,None)
+            if curId is None:
+                continue
+
+            for nxt, dir in self.neighbors(cur):
+                nid = self.room_Coord2ID.get(nxt,None)
+                if dest_room == 2:
+                    print(f'nxt:{nxt} dir:{dir} nid:{nid} exit: {self.room_exits_info[curId][dir]} ')
+                if (nid is None) or (self.room_exits_info[curId][dir] is None) or ((not self.room_exits_info[curId][dir]['opened']) and (not self.has_key)):#如果隔壁房间不存在或无法通过
+                    print('s')
+                    continue
+                if nxt in parent:
+                    print('p')
+                    continue
+                x, y = nxt
+                print(nxt)
+                parent[nxt] = (cur, dir)
+
+                if nxt == dest:
+                    # 回溯动作
+                    dirs = []
+                    p = nxt
+                    while parent[p][0] is not None:
+                        prev, dir = parent[p]
+                        dirs.append(dir)
+                        p = prev
+                    dirs.reverse()
+                    return dirs[0]
+
+                q.append(nxt)
+
+        return None
+
 
     def nearest(self, start: Pos, candidates: List[Pos]) -> Optional[Pos]:
         """从candidates中找到距离start最近的一个"""
@@ -467,6 +625,25 @@ class SymbolicPlanner:
             return None
         sx, sy = start
         return min(candidates, key=lambda p: abs(p[0] - sx) + abs(p[1] - sy))
+
+    def achive_subgoal(self,subgoal : Subgoal | None,sym : SymbolicObs):
+        """完成子任务后对planner的记忆进行更新"""
+        print(self.rooms)
+        if subgoal is None:
+            #处理为空，也就是游戏刚刚开始
+            if 0 in self.rooms['unexplored']:
+                self.explore_room(0,sym)
+                print(self.rooms)
+                return
+        if subgoal.kind == 'go_exit':
+            start = subgoal.start_room_id
+            dest = subgoal.dest_room_id
+            exit_dir = subgoal.exit_dir
+            self.room_exits_info[start][exit_dir]['is_reached'] = True
+            #如果该房间还没探索过
+            if dest in self.rooms['unexplored']:
+                self.explore_room(dest,sym)
+
 
 
 class OptionController:
@@ -521,10 +698,10 @@ class OptionController:
         tile_actions = bfs_path(sym.grid, sym.player, exit_pos)
         actions = expand_tile_actions(tile_actions)
 
-        # 再朝边界方向多走 32 步
+        # 再朝边界方向多走 16 步 +
         out_action = self.exit_direction_from_tile(exit_pos)
         if out_action != ACTION_NOOP:
-            actions.extend([out_action] * 32)
+            actions.extend([out_action] * 2)
 
         return actions
 
@@ -598,9 +775,12 @@ class SafetyShield:
             x, y = nxt
             tile = int(sym.grid[y, x])
 
-            # 不主动走进墙、陷阱、gap、怪物
-            if tile in {WALL, TRAP, GAP, MONSTER}:
+            # 不主动走进墙、陷阱、gap
+            if tile in {WALL, TRAP, GAP}:
                 return ACTION_NOOP
+            #如果发现怪兽
+            if tile == MONSTER:
+                return ACTION_A
 
         return action
 
@@ -643,7 +823,7 @@ class Policy:
         self.current_subgoal: Optional[Subgoal] = None
 
         self.last_sym: Optional[SymbolicObs] = None
-        self.perception_interval = 4   # 先用 4，稳定后可以改成 8
+        self.perception_interval = 100   # 先用 4，稳定后可以改成 8
 
         self.force_exit_action: Optional[int] = None
         self.force_exit_steps: int = 0
@@ -659,12 +839,11 @@ class Policy:
         self.force_exit_steps = 0
     
     def act(self, obs, info=None) -> int:
-
         # 已经进入强制出门模式：不要识图，不要 shield，直接往外走
         if self.force_exit_steps > 0 and self.force_exit_action is not None:
             self.force_exit_steps -= 1
 
-            if self.force_exit_steps % 10 == 0:
+            if self.force_exit_steps % 1 == 0:
                 print(
                     "[FORCE_EXIT]",
                     "action=", self.force_exit_action,
@@ -727,30 +906,30 @@ class Policy:
             raw_action = self.action_queue.popleft()
 
 
-        if (
-            self.current_subgoal is not None
-            and self.current_subgoal.kind == "go_exit"
-            and self.is_border_leaving_action(sym.player, raw_action)
-        ):
-            self.force_exit_action = raw_action
-            self.force_exit_steps = 40
+        # if (
+        #     self.current_subgoal is not None
+        #     and self.current_subgoal.kind == "go_exit"
+        #     and self.is_border_leaving_action(sym.player, raw_action)
+        # ):
+        #     self.force_exit_action = raw_action
+        #     self.force_exit_steps = 40
+        #
+        #     print(
+        #         "[START_FORCE_EXIT]",
+        #         "step=", self.belief.step,
+        #         "player=", sym.player,
+        #         "raw=", raw_action,
+        #         "exits=", sym.exits,
+        #     )
 
-            print(
-                "[START_FORCE_EXIT]",
-                "step=", self.belief.step,
-                "player=", sym.player,
-                "raw=", raw_action,
-                "exits=", sym.exits,
-            )
-
-            self.belief.last_action = raw_action
-            return int(raw_action)
+            # self.belief.last_action = raw_action
+            # return int(raw_action)
 
 
         # 5. 安全过滤
         action = self.shield.filter(raw_action, sym, self.belief)
 
-        if self.belief.step % 10 == 0 or replanned:
+        if self.belief.step % 1 == 0 or replanned:
             #lcd : 增加调试信息
             print(f"<<<<<<<<<<<< step: {self.belief.step} >>>>>>>>>>>>")
             print(
@@ -781,8 +960,9 @@ class Policy:
         if force_replan:
             return True
 
-        # 没有动作了，必须重新规划
+        # 没有动作了，必须重新规划,并对planner进行更新
         if not self.action_queue:
+            self.planner.achive_subgoal(self.current_subgoal,sym)
             return True
 
         # 识别不到玩家，先不继续盲走

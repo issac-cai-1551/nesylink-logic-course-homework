@@ -435,8 +435,8 @@ class PixelPerception:
         for e in exit_infos:
             x, y = e["tile"]
             dir = e['direction']
-            exits_info[dir] = {'type':e['exit_type'],'opened':e['opened']}
-            tiles = exits_info[dir].get(tiles,[])
+            exits_info[dir] = {'exit_type':e['exit_type'],'opened':e['opened']}
+            tiles = exits_info[dir].get('tiles',[])
             tiles.append((x,y))
             exits_info[dir]['tiles'] = tiles
             exits.append((x, y))
