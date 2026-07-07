@@ -405,8 +405,9 @@ class SymbolicPlanner:
 
         self.has_key = False
 
-    def neighbors(self,room_cood: Pos) -> List[Tuple[Pos, str]]:
-        x, y = room_cood
+    def neighbors(self,room_coord: Pos) -> List[Tuple[Pos, str]]:
+        """返回与rood_coord相邻的房间坐标，并附加目标方位"""
+        x, y = room_coord
         return [
             ((x, y - 1), 'left'),
             ((x, y + 1), 'right'),
@@ -618,7 +619,6 @@ class SymbolicPlanner:
 
         return None
 
-
     def nearest(self, start: Pos, candidates: List[Pos]) -> Optional[Pos]:
         """从candidates中找到距离start最近的一个"""
         if not candidates:
@@ -627,7 +627,10 @@ class SymbolicPlanner:
         return min(candidates, key=lambda p: abs(p[0] - sx) + abs(p[1] - sy))
 
     def achive_subgoal(self,subgoal : Subgoal | None,sym : SymbolicObs):
-        """完成子任务后对planner的记忆进行更新"""
+        """
+        完成子任务后对planner的记忆进行更新
+        内部会有二次检验是否完成子任务
+        """
         print(self.rooms)
         if subgoal is None:
             #处理为空，也就是游戏刚刚开始
@@ -636,15 +639,20 @@ class SymbolicPlanner:
                 print(self.rooms)
                 return
         if subgoal.kind == 'go_exit':
+            x,y = sym.player
             start = subgoal.start_room_id
             dest = subgoal.dest_room_id
             exit_dir = subgoal.exit_dir
-            self.room_exits_info[start][exit_dir]['is_reached'] = True
-            #如果该房间还没探索过
-            if dest in self.rooms['unexplored']:
-                self.explore_room(dest,sym)
-
-
+            # 检查是否确实到达并通过exit
+            flag = ((exit_dir=='up' and y >= (ROOM_H-1)//2) or
+                    (exit_dir=='down' and y < (ROOM_H-1)//2) or
+                    (exit_dir=='left' and x >= (ROOM_W-1)//2) or
+                    (exit_dir=='right' and x < (ROOM_W-1)//2))
+            if flag:
+                self.room_exits_info[start][exit_dir]['is_reached'] = True
+                #如果该房间还没探索过
+                if dest in self.rooms['unexplored']:
+                    self.explore_room(dest,sym)
 
 class OptionController:
     def build_actions(
@@ -675,6 +683,29 @@ class OptionController:
 
         return [ACTION_NOOP]
 
+    def actions_to_fit_tile(self,sym:SymbolicObs,dim : int = 0) -> List[int]:
+        """为了避免'action_blocked'，可以在bfs前将player移动到更好契合tile,dim表示在那个维度进行对齐，0-x,1-y,2-xy"""
+        actions = []
+        px_x , px_y = sym.player_px
+        t_px_x ,t_px_y = sym.player
+        t_px_x = t_px_x * TILE_SIZE
+        t_px_y = t_px_y * TILE_SIZE
+
+        action_x,action_y = ACTION_LEFT,ACTION_UP
+        if px_x < t_px_x:
+            action_x = ACTION_RIGHT
+        if px_y < t_px_y:
+            action_y = ACTION_DOWN
+
+        if dim == 2:
+            return [action_x] * abs(px_x - t_px_x) + [action_y] * abs(px_y - t_px_y)
+        if dim == 0:
+            return [action_x] * abs(px_x - t_px_x)
+        if dim == 1:
+            return [action_y] * abs(px_y - t_px_y)
+        else:
+            return []
+
     def actions_to_kill_monster(self,sym: SymbolicObs, facing: int) -> List[int]:
         """
         #lcd
@@ -694,15 +725,21 @@ class OptionController:
         """获取前往exit的actions"""
         assert sym.player is not None
 
+        actions = []
+        #先契合tile
+        actions += self.actions_to_fit_tile(sym)
+
         # 先走到出口 tile
         tile_actions = bfs_path(sym.grid, sym.player, exit_pos)
-        actions = expand_tile_actions(tile_actions)
+        actions += expand_tile_actions(tile_actions)
 
-        # 再朝边界方向多走 16 步 +
+        # 再朝边界方向多走 1 步
         out_action = self.exit_direction_from_tile(exit_pos)
+        print(f'out_action:{Enum2Str_facint(out_action)}')
         if out_action != ACTION_NOOP:
             actions.extend([out_action] * 2)
-
+            print(actions)
+        print(actions)
         return actions
 
     def exit_direction_from_tile(self, exit_pos: Pos) -> int:
@@ -770,6 +807,7 @@ class SafetyShield:
             nxt = self.predict_next_tile(sym.player, action)
 
             if not in_bounds(nxt):
+                print(f"bound{nxt}---{action}---{sym.exits}--{sym.player}")
                 return ACTION_NOOP
 
             x, y = nxt
@@ -802,6 +840,7 @@ class SafetyShield:
         x, y = pos
         
         if pos not in exits:
+            print(f'not exit--{action}')
             return False
 
         return (
@@ -839,21 +878,7 @@ class Policy:
         self.force_exit_steps = 0
     
     def act(self, obs, info=None) -> int:
-        # 已经进入强制出门模式：不要识图，不要 shield，直接往外走
-        if self.force_exit_steps > 0 and self.force_exit_action is not None:
-            self.force_exit_steps -= 1
-
-            if self.force_exit_steps % 1 == 0:
-                print(
-                    "[FORCE_EXIT]",
-                    "action=", self.force_exit_action,
-                    "steps_left=", self.force_exit_steps,
-                )
-
-            self.belief.last_action = self.force_exit_action
-
-            return int(self.force_exit_action)
-        
+        #是否需要再次识别图片
         need_vision = (
         self.last_sym is None
         or not self.action_queue
@@ -866,6 +891,7 @@ class Policy:
             self.last_sym = sym
             self.belief.update(sym, info)
         else:
+            #如果不识别图片，要推断变化值：facing,player_px,player
             sym = self.last_sym
             self.belief.step += 1
 
@@ -905,27 +931,6 @@ class Policy:
         else:
             raw_action = self.action_queue.popleft()
 
-
-        # if (
-        #     self.current_subgoal is not None
-        #     and self.current_subgoal.kind == "go_exit"
-        #     and self.is_border_leaving_action(sym.player, raw_action)
-        # ):
-        #     self.force_exit_action = raw_action
-        #     self.force_exit_steps = 40
-        #
-        #     print(
-        #         "[START_FORCE_EXIT]",
-        #         "step=", self.belief.step,
-        #         "player=", sym.player,
-        #         "raw=", raw_action,
-        #         "exits=", sym.exits,
-        #     )
-
-            # self.belief.last_action = raw_action
-            # return int(raw_action)
-
-
         # 5. 安全过滤
         action = self.shield.filter(raw_action, sym, self.belief)
 
@@ -952,7 +957,48 @@ class Policy:
             )
 
         self.belief.last_action = action
+        # 如果不识别图片，要推断变化值：facing,player_px,player
+        self.update_sym(action)
         return int(action)
+
+    def update_sym(self,action : int):
+        """
+        如果不识别图片，要推断变化值：facing,player_px,player
+        有时候player会对图片进行遮挡，导致exit无法识别，可以使用planner的记忆进行处理
+        """
+        dx , dy = 0 , 0
+        if action == ACTION_LEFT:
+            self.last_sym.facing = 'left'
+            dx -= 1
+        if action == ACTION_RIGHT:
+            self.last_sym.facing = 'right'
+            dx += 1
+        if action == ACTION_UP:
+            self.last_sym.facing = 'up'
+            dy -= 1
+        if action == ACTION_DOWN:
+            self.last_sym.facing = 'down'
+            dy += 1
+        x , y = self.last_sym.player_px
+        self.last_sym.player_px = (x+dx,y+dy)
+        cx = x+dx + 8
+        cy = y+dy + 12
+
+        tx = max(0, min(9, cx // 16))
+        ty = max(0, min(7, cy // 16))
+
+        self.last_sym.player = (tx,ty)
+
+        #对sym的exits进行维护
+        cur_room = self.planner.current_room_id
+        for dir,exit in self.planner.room_exits_info[cur_room].items():
+            if (exit is None) or (exit['tiles'] is None):
+                continue
+            tiles = exit['tiles']
+            for t in tiles:
+                if t not in self.last_sym.exits:
+                    self.last_sym.exits.append(t)
+
 
     def need_replan(self, sym: SymbolicObs, info=None,force_replan=False) -> bool:
         """判断是否需要重新规划"""
@@ -969,39 +1015,6 @@ class Policy:
         if sym.player is None:
             self.action_queue.clear()
             return True
-
-        #发生了一些需要重新规划的事件
-
-
-        # # 卡住了，重新规划
-        # if self.belief.stuck_count >= 4:
-        #     self.action_queue.clear()
-        #     return True
-
-        # # reward / info 里如果出现关键事件，也重新规划
-        # # 注意：这里只建议用于训练/调试；最终要保证不使用隐藏状态。
-        # if isinstance(info, dict):
-        #     events = info.get("events", {})
-        #     flags = events.get("flags", {}) if isinstance(events, dict) else {}
-
-        #     important = [
-        #         "chest_opened",
-        #         "key_collected",
-        #         "item_collected",
-        #         "monster_killed",
-        #         "door_opened",
-        #         "button_pressed",
-        #         "switch_activated",
-        #         "bridge_rotated",
-        #         "room_changed",
-        #         "world_completed",
-        #         "action_blocked",
-        #     ]
-
-        #     for name in important:
-        #         if flags.get(name, False):
-        #             self.action_queue.clear()
-        #             return True
 
         return False
     
