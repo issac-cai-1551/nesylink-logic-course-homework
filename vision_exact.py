@@ -93,6 +93,17 @@ class SymbolicObs:
                     result[tile] = info.opened
         return result
 
+    @property
+    def exit_infos_list(self) -> List[ExitInfo]:
+        """
+        动态生成exit_infos的列表形态,去掉None
+        """
+        result = []
+        for info in self.exit_infos.values():
+            if info is not None:
+                result.append(info)
+        return result
+
 
 def blank_tile():
     frame = np.zeros((TILE, TILE, 3), dtype=np.uint8)

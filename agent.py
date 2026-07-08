@@ -284,6 +284,8 @@ def manhattan(a: Pos, b: Pos) -> int:
 def get_exit_info_for_tile(sym: SymbolicObs, tile: Pos) -> Optional[ExitInfo]:
     """根据 tile 返回对应的 ExitInfo。"""
     for info in sym.exit_infos.values():
+        if info is None:
+            continue
         if tile in info.tiles:
             return info
     return None
@@ -1367,8 +1369,11 @@ class SafetyShield:
             tile = int(sym.grid[y, x])
 
             # 不主动走进墙、陷阱、gap
-            if tile in {WALL, TRAP, GAP, MONSTER}:
+            if tile in {WALL, TRAP, GAP}:
                 return ACTION_NOOP
+
+            #不再遇到Monster在前面就ACTION_NOOP
+            # 因为player and monster都是dynamic_rect，就算tile上是monster也不一定与player相撞
 
         return action
 
@@ -1414,7 +1419,7 @@ class Policy:
         # 维护sym
         self.last_action = ACTION_NOOP
         self.sym: Optional[SymbolicObs] = None
-        self.perception_interval = 100  # 先用 4，稳定后可以改成 8
+        self.perception_interval = 4  # 先用 4，稳定后可以改成 8
 
         self.force_exit_action: Optional[int] = None
         self.force_exit_steps: int = 0
@@ -1547,7 +1552,7 @@ class Policy:
                         "type": info.exit_type,
                         "opened": info.opened,
                     }
-                    for info in sym.exit_infos
+                    for info in sym.exit_infos_list
                 ],
             )
 
